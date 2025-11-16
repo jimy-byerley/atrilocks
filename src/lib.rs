@@ -190,7 +190,7 @@ pub type SleepyMutex<T> = Mutex<T, SleepyLock>;
     
     implemented using only a atomic bool
 */
-pub struct Mutex<T, L> {
+pub struct Mutex<T, L: Lock> {
     value: UnsafeCell<T>,
     lock: L,
 }
