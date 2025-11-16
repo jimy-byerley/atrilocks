@@ -2,6 +2,12 @@
 name = "atrilocks"
 version = "0.1.0"
 edition = "2024"
+authors = ["Jimy Byerley <jimy.byerley@gmail.com>"]
+description = "collection of light weight async synchronization primitives based on atomics"
+license = "LGPL V3"
+categories = ["concurrency", "no-std"]
+keywords = ["async", "no-std", "heapless", "mutex"]
+repository = "https://github.com/jimy-byerley/atrilocks"
 
 [features]
 std = []

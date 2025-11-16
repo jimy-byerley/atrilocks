@@ -185,11 +185,7 @@ pub type BusyMutex<T> = Mutex<T, BusyLock>;
 /// mutex setting tasks asleep while the mutex is locked by something else
 pub type SleepyMutex<T> = Mutex<T, SleepyLock>;
 
-/** 
-    extremely light wieght mutex whose locking calls are busy waiting (constantly polling for acquisition)
-    
-    implemented using only a atomic bool
-*/
+/// mutex implemented on top of custom locking primitive
 pub struct Mutex<T, L: Lock> {
     value: UnsafeCell<T>,
     lock: L,
