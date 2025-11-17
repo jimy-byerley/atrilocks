@@ -41,6 +41,9 @@ pub struct Notify {
     waker: BusyMutex<Option<Waker>>,
 }
 impl Notify {
+    pub fn new() -> Self {
+        Self{ waker: BusyMutex::new(None) }
+    }
     /**
         block until trigger is called and all waiturs conditions until the current task are satisfied
         
@@ -67,6 +70,9 @@ impl Notify {
         }
     }
 }
+impl Default for Notify {
+    fn default() -> Self {Self::new()}
+}
 pub struct Waiter<'n, F> {
     notify: &'n Notify,
     condition: F,
@@ -85,6 +91,7 @@ where F: FnMut() -> Option<R>
             Poll::Ready(result)
         }
         else {
+            // what if we already have a next ?
             self.next = self.notify.waker.blocking_lock().replace(context.waker().clone());
             Poll::Pending
         }
@@ -102,13 +109,13 @@ impl<F> Unpin for Waiter<'_, F> {}
 
 
 /// trait for async lock implementations
-pub trait Lock {
+pub trait Lock: Send + Sync {
     /// return true if in *locked* state at the moment it is called
     fn is_locked(&self) -> bool;
     /// try to acquire the lock, then return true, otherwise return false, on success it will remain in *locked* state until [Self::release] is called
     fn try_lock(&self) -> bool;
     /// block until the lock is acquired (asynchronous version), it will remain in *locked* state until [Self::release] is called
-    fn lock(&self) -> impl Future;
+    fn lock(&self) -> impl Future + Send;
     /// block until the lock is acquired (synchronous version), it will remain in *locked* state until [Self::release] is called
     fn blocking_lock(&self);
     /// set the lock to *unlocked* state, whatever its previous state was
@@ -125,6 +132,14 @@ pub trait Lock {
 pub struct BusyLock {
     locked: AtomicBool,
 }
+impl BusyLock {
+    pub fn new() -> Self {
+        Self{ locked: AtomicBool::new(false) }
+    }
+}
+impl Default for BusyLock {
+    fn default() -> Self {Self::new()}
+}
 impl Lock for BusyLock {
     fn is_locked(&self) -> bool {
         self.locked.load(Relaxed)
@@ -133,10 +148,12 @@ impl Lock for BusyLock {
         self.locked.swap(true, Acquire) == false
     }
     fn lock(&self) -> impl Future {
-        poll_fn(|_| match self.try_lock() {
-            true => Poll::Ready(()),
-            false => Poll::Pending,
-        })
+        poll_fn(|context| {
+            context.waker().clone().wake();
+            match self.try_lock() {
+                true => Poll::Ready(()),
+                false => Poll::Pending,
+            }})
     }
     fn blocking_lock(&self) {
         while ! self.try_lock() {}
@@ -157,12 +174,26 @@ pub struct SleepyLock {
     lock: BusyLock,
     notify: Notify,
 }
+impl SleepyLock {
+    fn new() -> Self {
+        Self{ 
+            lock: BusyLock::new(),
+            notify: Notify::new(),
+        }
+    }
+}
+impl Default for SleepyLock {
+    fn default() -> Self {Self::new()}
+}
 impl Lock for SleepyLock {
     fn is_locked(&self) -> bool {
         self.lock.is_locked()
     }
     fn try_lock(&self) -> bool {
-        self.lock.try_lock()
+        println!("try lock");
+        let result = self.lock.try_lock();
+        if result {println!("acquire");}
+        result
     }
     fn lock(&self) -> impl Future {
         self.notify.wait(|| if self.try_lock() {Some(())} else {None})
@@ -190,6 +221,17 @@ pub struct Mutex<T, L: Lock> {
     value: UnsafeCell<T>,
     lock: L,
 }
+impl<T, L: Lock + Default> Mutex<T, L> {
+    pub fn new(value: T) -> Self {
+        Self {
+            value: UnsafeCell::new(value),
+            lock: L::default(),
+        }
+    }
+}
+impl<T: Default, L: Lock + Default> Default for Mutex<T,L> {
+    fn default() -> Self {Self::new(T::default())}
+}
 impl<T, L: Lock> Mutex<T, L> {
     /// return true if mutex is already locked
     pub fn is_locked(&self) -> bool {
@@ -213,6 +255,8 @@ impl<T, L: Lock> Mutex<T, L> {
         MutexGuard{mutex: self}
     }
 }
+unsafe impl<T, L: Lock + Sync> Sync for Mutex<T, L> {}
+unsafe impl<T, L: Lock + Send> Send for Mutex<T, L> {}
 
 pub struct MutexGuard<'m, T, L: Lock> {
     mutex: &'m Mutex<T, L>,
